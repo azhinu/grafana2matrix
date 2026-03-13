@@ -18,7 +18,7 @@
 
           src = ./.;
 
-          npmDepsHash = "sha256-SZ5RSBBxaIgA5+cBvkWrsFpcEUvDQCqP1UwyMSkhygI=";
+          npmDepsHash = "sha256-fKs3hHa9q2uJqZ0eSb0Eul71WY6QCQy6sAbNP/eP7NA=";
 
           nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
 
