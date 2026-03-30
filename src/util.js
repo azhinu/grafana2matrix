@@ -51,6 +51,7 @@ const sortAlertsByUsers = (alerts) => {
 
 const isCritical = (severity) => severity.toUpperCase() === 'CRITICAL' || severity.toUpperCase() === 'CRIT';
 const isWarn  = (severity) => severity.toUpperCase() === 'WARNING' || severity.toUpperCase() === 'WARN';
+const isInfo  = (severity) => severity.toUpperCase() === 'INFO';
 
 const checkMention = (conf, alert, type, strategy) => {
 
@@ -202,7 +203,7 @@ const getSilencesFilterFunction = (severity) => {
 }
 
 const getAlertValue = (a, label, defaultValue = undefined) => {
-    return a.labels[label] || a.annotations[label] || defaultValue;
+    return a.labels[label] || a[label]  ||  a.annotations[label] || defaultValue;
 }
 
 const getAdditionalLabels = (alert) => {
@@ -219,4 +220,4 @@ const getAdditionalLabels = (alert) => {
     return labels;
 };
 
-export { getMentionConfig, isCritical, isWarn, parseTimeToMinutes, sortAlertsByUsers, checkMentionMessages, checkSchedule, getSeverityMatchFunction, getSilencesFilterFunction, getAlertValue, getAdditionalLabels };
+export { getMentionConfig, isCritical, isWarn, isInfo, parseTimeToMinutes, sortAlertsByUsers, checkMentionMessages, checkSchedule, getSeverityMatchFunction, getSilencesFilterFunction, getAlertValue, getAdditionalLabels };

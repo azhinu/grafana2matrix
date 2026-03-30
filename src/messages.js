@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { getAlertValue, getMentionConfig, isCritical, isWarn , getAdditionalLabels } from "./util.js";
+import { getAlertValue, getMentionConfig, isCritical, isWarn, isInfo, getAdditionalLabels } from "./util.js";
 
 // add dayjs plugins
 import relativeTime from 'dayjs/plugin/relativeTime.js';
@@ -14,6 +14,9 @@ const createMatrixMessage = (a) => {
     const additionalLabels = getAdditionalLabels(a);
     const summary = getAlertValue(a, "summary");
     const description = getAlertValue(a, "description") || getAlertValue(a, "message") || '';
+    const alertLink = getAlertValue(a, "generatorURL") || '';
+    const dashboardLink = getAlertValue(a, "dashboardURL") || '';
+    const silenceLink = getAlertValue(a, "silenceURL") || '';
     
     const isFiring = a.status === 'firing';
     let color; 
@@ -21,6 +24,9 @@ const createMatrixMessage = (a) => {
     if (!isFiring) {
         color = '#007a00';
         resolved = "RESOLVED ";
+    }
+    else if (isInfo(severity)) {
+        color = '#3daeef';
     }
     else if (isWarn(severity)) {
         color = '#ff9100';
@@ -41,6 +47,16 @@ const createMatrixMessage = (a) => {
     
     if (description) {
         matrixMessage += `${description}\n`;
+    }
+
+    if (alertLink) {
+        matrixMessage += `**[View Alert](${alertLink})** `;
+    }
+    if (dashboardLink) {
+        matrixMessage += `**[View Dashboard](${dashboardLink})** `;
+    }
+    if (silenceLink) {
+        matrixMessage += `**[Silence Alert](${silenceLink})**\n`;
     }
 
     const mentionConfig = getMentionConfig();
