@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { fetchWithRetry } from './fetch.js';
 
 const sendGrafanaSilence = async (alert, start, end = new Date(0)) => {
     
@@ -32,7 +33,7 @@ const sendGrafanaSilence = async (alert, start, end = new Date(0)) => {
     
 
     try {
-        const response = await fetch(`${config.GRAFANA_URL}/api/alertmanager/grafana/api/v2/silences`, {
+        const response = await fetchWithRetry(`${config.GRAFANA_URL}/api/alertmanager/grafana/api/v2/silences`, {
             method: 'POST',
             body: JSON.stringify(payload),
             headers: {
@@ -60,7 +61,7 @@ const fetchGrafanaSilences = async () => {
     }
 
     try {
-        const response = await fetch(`${config.GRAFANA_URL}/api/alertmanager/grafana/api/v2/silences?filter=state%3Dactive`, {
+        const response = await fetchWithRetry(`${config.GRAFANA_URL}/api/alertmanager/grafana/api/v2/silences?filter=state%3Dactive`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${config.GRAFANA_API_KEY}`,
@@ -89,7 +90,7 @@ const fetchGrafanaActiveAlerts = async () => {
     }
 
     try {
-        const response = await fetch(`${config.GRAFANA_URL}/api/alertmanager/grafana/api/v2/alerts`, {
+        const response = await fetchWithRetry(`${config.GRAFANA_URL}/api/alertmanager/grafana/api/v2/alerts`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${config.GRAFANA_API_KEY}`,

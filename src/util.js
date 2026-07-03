@@ -19,8 +19,12 @@ const getMentionConfig = () => {
 // Helper to parse HH:mm to minutes
 const parseTimeToMinutes = (timeStr) => {
     if (!timeStr) return -1;
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    if (Number.isNaN(hours) || Number.isNaN(minutes)) return -1;
+    const parts = timeStr.split(':');
+    if (parts.length !== 2) return -1;
+
+    const [hours, minutes] = parts.map(Number);
+    if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return -1;
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return -1;
     return hours * 60 + minutes;
 };
 
@@ -199,11 +203,14 @@ const getSeverityMatchFunction = (severity) => {
 const getSilencesFilterFunction = (severity) => {
     const matcherFunc = getSeverityMatchFunction(severity);
 
-    return e => matcherFunc(e.matchers.find(v => v.name === "severity").value)
+    return e => {
+        const severityMatcher = e?.matchers?.find(v => v.name === "severity");
+        return severityMatcher ? matcherFunc(severityMatcher.value) : false;
+    }
 }
 
 const getAlertValue = (a, label, defaultValue = undefined) => {
-    return a.labels[label] || a[label]  ||  a.annotations[label] || defaultValue;
+    return a?.labels?.[label] ?? a?.[label] ?? a?.annotations?.[label] ?? defaultValue;
 }
 
 const getAdditionalLabels = (alert) => {

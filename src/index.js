@@ -19,6 +19,7 @@ import {
     deleteBotState} from './db.js';
 import { config, reloadConfig } from './config.js';
 import { sendGrafanaSilence, fetchGrafanaSilences, fetchGrafanaActiveAlerts } from './grafana.js';
+import { notifyWebhookProcessingError } from './webhook-error.js';
 
 const app = express();
 
@@ -471,6 +472,11 @@ app.post('/webhook', async (req, res) => {
                 const id = alert.fingerprint;
                 const alertStatus = alert.status; // 'firing' or 'resolved'
 
+                if (!id) {
+                    console.warn(`Skipping unified alert without fingerprint: ${alert.labels?.alertname || 'Unknown Alert'}`);
+                    continue;
+                }
+
                 if (alertStatus === 'firing') {
                     if (!hasActiveAlert(id)) {
                         console.log(`New firing alert: ${id} (${alert.labels?.alertname})`);
@@ -529,7 +535,7 @@ app.post('/webhook', async (req, res) => {
             }
 
             // Prune zombie alerts (alerts that are in DB but not in the current webhook request, but ONLY for alertnames present in the webhook)
-            const receivedAlertIds = new Set(data.alerts.map(a => a.fingerprint));
+            const receivedAlertIds = new Set(data.alerts.map(a => a.fingerprint).filter(Boolean));
             const receivedAlertNames = new Set(data.alerts.map(a => a.labels?.alertname).filter(Boolean));
             const activeAlerts = getAllActiveAlerts();
 
@@ -564,7 +570,7 @@ app.post('/webhook', async (req, res) => {
         res.status(200).send('Notification sent');
 
     } catch (error) {
-        console.error('Error processing webhook:', error.message);
+        await notifyWebhookProcessingError(matrix, error);
         res.status(500).send('Error processing webhook');
     }
 });
@@ -572,7 +578,9 @@ app.post('/webhook', async (req, res) => {
 let counter = 0;
 // Periodic Summary Logic
 const checkSummariesAndMentions = async () => {
-    if (counter === 0 && config.KEEP_ALIVE_INTERVAL !== 0) {
+    const keepAliveInterval = config.KEEP_ALIVE_INTERVAL;
+
+    if (keepAliveInterval > 0 && counter === 0) {
 
         let lastWebhook = getBotState('last_webhook_received');
         let lastMatrix = getBotState('last_matrix_received');
@@ -603,7 +611,11 @@ const checkSummariesAndMentions = async () => {
             }
         }
     }   
-    counter = (counter + 1) % config.KEEP_ALIVE_INTERVAL;
+    if (keepAliveInterval > 0) {
+        counter = (counter + 1) % keepAliveInterval;
+    } else {
+        counter = 0;
+    }
     
     const verifiedActiveAlerts = await fetchVerifiedActiveAlertsFromDB();
     if (!verifiedActiveAlerts) {

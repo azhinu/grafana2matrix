@@ -1,4 +1,65 @@
 import EventEmitter from 'node:events';
+import { fetchWithRetry } from './fetch.js';
+
+const escapeHtml = (value) => String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const decodeHtmlEntities = (value) => String(value)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+const createSafeLink = (label, rawUrl) => {
+    try {
+        const url = new URL(decodeHtmlEntities(rawUrl));
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            return label;
+        }
+
+        return `<a href="${escapeHtml(url.href)}">${label}</a>`;
+    } catch {
+        return label;
+    }
+};
+
+const protectAllowedHtml = (messageContent) => {
+    const allowedTags = [];
+    const protectedContent = String(messageContent).replace(/<\/font>|<font color="#[0-9a-fA-F]{6}">/g, (tag) => {
+        const placeholder = `\0G2M_ALLOWED_HTML_${allowedTags.length}\0`;
+        allowedTags.push({ placeholder, tag });
+        return placeholder;
+    });
+
+    return { protectedContent, allowedTags };
+};
+
+const restoreAllowedHtml = (formattedBody, allowedTags) => {
+    let restoredBody = formattedBody;
+    for (const { placeholder, tag } of allowedTags) {
+        restoredBody = restoredBody.replaceAll(placeholder, tag);
+    }
+    return restoredBody;
+};
+
+const formatHtmlMessage = (messageContent) => {
+    const { protectedContent, allowedTags } = protectAllowedHtml(messageContent);
+    let formattedBody = escapeHtml(protectedContent);
+    formattedBody = restoreAllowedHtml(formattedBody, allowedTags);
+
+    formattedBody = formattedBody
+        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+        .replace(/\*\*(.+?)\*\*/gs, '<b>$1</b>')
+        .replace(/\[([^\]]+)\]\(([^\s]+)\)/g, (_match, label, rawUrl) => createSafeLink(label, rawUrl))
+        .replace(/\n/g, '<br>');
+
+    return formattedBody;
+};
 
 class MatrixServer extends EventEmitter{
 
@@ -12,9 +73,21 @@ class MatrixServer extends EventEmitter{
         this.loop();
     }
 
+    async safeEmitAsync(eventName, payload) {
+        const listeners = this.listeners(eventName);
+
+        for (const listener of listeners) {
+            try {
+                await listener(payload);
+            } catch (error) {
+                console.error(`Matrix ${eventName} handler failed:`, error);
+            }
+        }
+    }
+
     async getUserId() {
         try {
-            const res = await fetch(`${this.homeserver}/_matrix/client/v3/account/whoami`, {
+            const res = await fetchWithRetry(`${this.homeserver}/_matrix/client/v3/account/whoami`, {
                 headers: { 'Authorization': `Bearer ${this.token}` }
             });
             if (!res.ok) throw new Error(`Whoami failed: ${res.status}`);
@@ -81,7 +154,7 @@ class MatrixServer extends EventEmitter{
                              const key = relatesTo.key; // The emoji
                              const targetEventId = relatesTo.event_id;
                              
-                            this.emit("reaction", {key: key, targetEventId: targetEventId});
+                            await this.safeEmitAsync("reaction", {key: key, targetEventId: targetEventId});
                          }
                      } else if (event.type === 'm.room.message') {
                         const alreadyReacted = await this.hasUserReacted(event.event_id, '☑️');
@@ -90,12 +163,12 @@ class MatrixServer extends EventEmitter{
                         }
 
                         if (event.sender !== this.userId) {
-                            this.emit('userMessage', event);
+                            await this.safeEmitAsync('userMessage', event);
                         }
                      }
                  }
             }
-            this.emit('loop');
+            await this.safeEmitAsync('loop');
 
         } catch (error) {
             console.error('Sync error:', error.message);
@@ -107,7 +180,7 @@ class MatrixServer extends EventEmitter{
     async hasUserReacted(eventId, key) {
         try {
             const url = `${this.homeserver}/_matrix/client/v1/rooms/${encodeURIComponent(this.roomID)}/relations/${encodeURIComponent(eventId)}/m.annotation/m.reaction?limit=100`;
-            const res = await fetch(url, {
+            const res = await fetchWithRetry(url, {
                 headers: { 'Authorization': `Bearer ${this.token}` }
             });
 
@@ -136,7 +209,7 @@ class MatrixServer extends EventEmitter{
 
         try {
             const body = this.formatMessageBody(messageContent);
-            const response = await fetch(url, {
+            const response = await fetchWithRetry(url, {
                 method: 'PUT',
                 body: JSON.stringify(body),
                 headers: {
@@ -180,7 +253,7 @@ class MatrixServer extends EventEmitter{
                  ...baseBody
              };
  
-             const response = await fetch(url, {
+             const response = await fetchWithRetry(url, {
                  method: 'PUT',
                  body: JSON.stringify(body),
                  headers: {
@@ -206,10 +279,7 @@ class MatrixServer extends EventEmitter{
         return {
             body: messageContent,
             format: "org.matrix.custom.html",
-            formatted_body: messageContent.replace(/\n/g, '<br>')
-            .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
-            .replace(/## (.*?)(\n|<br>)/, '<h3>$1</h3>')
-            .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>'),
+            formatted_body: formatHtmlMessage(messageContent),
             msgtype: "m.text"
         };
     }
@@ -219,8 +289,10 @@ class MatrixServer extends EventEmitter{
         if (since !== null) {
             url += `&since=${since}`
         }
-        const res = await fetch(url, {
+        const res = await fetchWithRetry(url, {
             headers: { 'Authorization': `Bearer ${this.token}` }
+        }, {
+            baseTimeoutMs: timeout + 5000,
         });
 
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -231,7 +303,7 @@ class MatrixServer extends EventEmitter{
     async sendReaction(matrixEventId, key = '☑️') {
          const reactionTxnId = `${Date.now()}_react_${Math.random().toString(36).substring(2, 9)}`;
             try {
-                const reactRes = await fetch(`${this.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(this.roomID)}/send/m.reaction/${reactionTxnId}`, {
+                const reactRes = await fetchWithRetry(`${this.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(this.roomID)}/send/m.reaction/${reactionTxnId}`, {
                     method: 'PUT',
                     body: JSON.stringify({
                         "m.relates_to": {
@@ -256,7 +328,7 @@ class MatrixServer extends EventEmitter{
 
         console.log('Fetching joined rooms...');
         try {
-            const res = await fetch(`${this.homeserver}/_matrix/client/v3/joined_rooms`, {
+            const res = await fetchWithRetry(`${this.homeserver}/_matrix/client/v3/joined_rooms`, {
                 headers: { 'Authorization': `Bearer ${this.token}` }
             });
             if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -268,7 +340,7 @@ class MatrixServer extends EventEmitter{
             for (const roomId of rooms) {
                 let name = '';
                 try {
-                    const nameRes = await fetch(`${this.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.name`, {
+                    const nameRes = await fetchWithRetry(`${this.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.name`, {
                         headers: { 'Authorization': `Bearer ${this.token}` }
                     });
                     if (nameRes.ok) {

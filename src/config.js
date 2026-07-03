@@ -42,10 +42,17 @@ const get = (key, defaultValue) => {
 
     // While using env variables always produces a string, config.json can indeed contain a boolean.
     if (typeof value === 'boolean') return value;
+    if (typeof value !== 'string') return value;
 
     if (value.toLowerCase() === 'true') return true;
     if (value.toLowerCase() === 'false') return false;
     return value;
+};
+
+const getNumber = (key, defaultValue) => {
+    const value = get(key, defaultValue);
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : defaultValue;
 };
 
 export const config = {};
@@ -64,7 +71,7 @@ export function reloadConfig() {
     config.SUMMARY_SCHEDULE_SKIP_EMPTY = get('SUMMARY_SCHEDULE_SKIP_EMPTY', false);
     config.MENTION_CONFIG_PATH = get('MENTION_CONFIG_PATH');
     config.DB_FILE = get('DB_FILE', 'alerts.db');
-    config.KEEP_ALIVE_INTERVAL = get('KEEP_ALIVE_INTERVAL', 60);
+    config.KEEP_ALIVE_INTERVAL = getNumber('KEEP_ALIVE_INTERVAL', 60);
     config.ADDITIONAL_LABELS = get('ADDITIONAL_LABELS');
 }
 
