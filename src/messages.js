@@ -15,6 +15,7 @@ const createMatrixMessage = (a) => {
     const summary = getAlertValue(a, "summary");
     const description = getAlertValue(a, "description") || getAlertValue(a, "message") || '';
     const alertLink = getAlertValue(a, "generatorURL") || '';
+    const panelLink = getAlertValue(a, "panelURL") || '';
     const dashboardLink = getAlertValue(a, "dashboardURL") || '';
     const silenceLink = getAlertValue(a, "silenceURL") || '';
     
@@ -51,6 +52,9 @@ const createMatrixMessage = (a) => {
 
     if (alertLink) {
         matrixMessage += `**[View Alert](${alertLink})** `;
+    }
+    if (panelLink) {
+        matrixMessage += `**[View Panel](${panelLink})** `;
     }
     if (dashboardLink) {
         matrixMessage += `**[View Dashboard](${dashboardLink})** `;
