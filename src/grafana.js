@@ -82,4 +82,37 @@ const fetchGrafanaSilences = async () => {
     }
 }
 
-export { sendGrafanaSilence, fetchGrafanaSilences };
+const fetchGrafanaActiveAlerts = async () => {
+    if (!config.GRAFANA_URL || !config.GRAFANA_API_KEY) {
+        console.error('Grafana config missing, cannot fetch active alerts');
+        return null;
+    }
+
+    try {
+        const response = await fetch(`${config.GRAFANA_URL}/api/alertmanager/grafana/api/v2/alerts`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${config.GRAFANA_API_KEY}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('Grafana response:', errorData);
+            return null;
+        }
+
+        const data = await response.json();
+        if (!Array.isArray(data)) {
+            return null;
+        }
+
+        return data;
+    } catch (error) {
+        console.error('Failed to fetch active alerts:', error.message);
+        return null;
+    }
+}
+
+export { sendGrafanaSilence, fetchGrafanaSilences, fetchGrafanaActiveAlerts };

@@ -18,7 +18,7 @@ import {
     setBotState,
     deleteBotState} from './db.js';
 import { config, reloadConfig } from './config.js';
-import { sendGrafanaSilence, fetchGrafanaSilences } from './grafana.js';
+import { sendGrafanaSilence, fetchGrafanaSilences, fetchGrafanaActiveAlerts } from './grafana.js';
 
 const app = express();
 
@@ -171,12 +171,91 @@ const parseDurationInput = (rawInput) => {
     return null;
 };
 
-const sendSummary = async (severity, enforceSending = false) => {
+const buildAlertLabelsKey = (labels = {}) => {
+    return Object.entries(labels)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, value]) => `${name}=${value}`)
+        .join('|');
+};
+
+const buildActiveAlertsIndex = (alertsFromGrafana) => {
+    const fingerprints = new Set();
+    const labelKeys = new Set();
+
+    for (const alert of alertsFromGrafana) {
+        const statusState = alert.status?.state;
+        if (statusState === 'resolved') {
+            continue;
+        }
+
+        if (alert.fingerprint) {
+            fingerprints.add(alert.fingerprint);
+        }
+
+        const labels = alert.labels || {};
+        const labelKey = buildAlertLabelsKey(labels);
+        if (labelKey) {
+            labelKeys.add(labelKey);
+        }
+    }
+
+    return { fingerprints, labelKeys };
+};
+
+const isAlertVerifiedAsActive = (alert, activeAlertsIndex) => {
+    if (!activeAlertsIndex) {
+        return false;
+    }
+
+    if (alert.fingerprint && activeAlertsIndex.fingerprints.has(alert.fingerprint)) {
+        return true;
+    }
+
+    const labelKey = buildAlertLabelsKey(alert.labels || {});
+    return Boolean(labelKey) && activeAlertsIndex.labelKeys.has(labelKey);
+};
+
+const getVerifiedActiveAlerts = (alerts, activeAlertsIndex) => {
+    return alerts.filter((alert) => isAlertVerifiedAsActive(alert, activeAlertsIndex));
+};
+
+const pruneUnverifiedActiveAlerts = (alerts, activeAlertsIndex) => {
+    for (const alert of alerts) {
+        if (!isAlertVerifiedAsActive(alert, activeAlertsIndex)) {
+            if (alert.fingerprint) {
+                console.log(`Pruning stale DB alert (not active in Grafana): ${alert.fingerprint} (${alert.labels?.alertname})`);
+                deleteActiveAlert(alert.fingerprint);
+                deleteMessageMapByAlertId(alert.fingerprint);
+            }
+        }
+    }
+};
+
+const fetchVerifiedActiveAlertsFromDB = async () => {
+    const alertsFromGrafana = await fetchGrafanaActiveAlerts();
+
+    if (!alertsFromGrafana) {
+        return null;
+    }
+
+    const activeAlertsIndex = buildActiveAlertsIndex(alertsFromGrafana);
+    const dbAlerts = getAllActiveAlerts();
+    pruneUnverifiedActiveAlerts(dbAlerts, activeAlertsIndex);
+    return getVerifiedActiveAlerts(dbAlerts, activeAlertsIndex);
+};
+
+const sendSummary = async (severity, enforceSending = false, verifiedAlerts = null) => {
     const alertsForSeverity = [];
     
     const matcherFunc = getSeverityMatchFunction(severity);
 
-    for (const alert of getAllActiveAlerts()) {
+    const activeAlerts = verifiedAlerts ?? await fetchVerifiedActiveAlertsFromDB();
+    if (!activeAlerts) {
+        console.warn(`Skipping summary for severity ${severity}: failed to verify active alerts in Grafana.`);
+        return;
+    }
+
+    for (const alert of activeAlerts) {
         const sev = getAlertValue(alert, "severity", "UNKNOWN").toUpperCase();        
 
         if (matcherFunc(sev)) {
@@ -419,7 +498,16 @@ app.post('/webhook', async (req, res) => {
             if (alertsToNotify.length === 0) {
                 console.log('No state changes detected (all alerts are duplicates). Skipping individual Matrix notification.');
 
-                const messages = checkMentionMessages(data.alerts, "webhook");
+                const verifiedActiveAlerts = await fetchVerifiedActiveAlertsFromDB();
+                if (!verifiedActiveAlerts) {
+                    console.warn('Skipping repeat notifications for webhook duplicates: failed to verify active alerts in Grafana.');
+                    return res.status(200).send('Processed');
+                }
+
+                const verifiedAlertFingerprints = new Set(verifiedActiveAlerts.map((a) => a.fingerprint).filter(Boolean));
+                const verifiedWebhookAlerts = data.alerts.filter((a) => a.fingerprint && verifiedAlertFingerprints.has(a.fingerprint));
+
+                const messages = checkMentionMessages(verifiedWebhookAlerts, "webhook");
 
                 for (const msg of messages) {
                     await matrix.sendMatrixNotification(msg);
@@ -517,8 +605,14 @@ const checkSummariesAndMentions = async () => {
     }   
     counter = (counter + 1) % config.KEEP_ALIVE_INTERVAL;
     
+    const verifiedActiveAlerts = await fetchVerifiedActiveAlertsFromDB();
+    if (!verifiedActiveAlerts) {
+        console.warn('Skipping summary and repeat checks: failed to verify active alerts in Grafana.');
+        return;
+    }
+
     // Check mentions
-    const messages = checkMentionMessages(getAllActiveAlerts(), "loop");
+    const messages = checkMentionMessages(verifiedActiveAlerts, "loop");
 
      for (const msg of messages) {
         await matrix.sendMatrixNotification(msg);
@@ -527,8 +621,8 @@ const checkSummariesAndMentions = async () => {
     const sendCrit = await checkSchedule('CRIT', config.SUMMARY_SCHEDULE_CRIT || "6:00,14:30");
     const sendWarn = await checkSchedule('WARN', config.SUMMARY_SCHEDULE_WARN || "6:00,14:30");
 
-    if (sendCrit) sendSummary("CRIT");
-    if (sendWarn) sendSummary("WARN");
+    if (sendCrit) sendSummary("CRIT", false, verifiedActiveAlerts);
+    if (sendWarn) sendSummary("WARN", false, verifiedActiveAlerts);
 };
 
 // Check every minute
