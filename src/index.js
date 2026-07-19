@@ -20,6 +20,7 @@ import {
 import { config, reloadConfig } from './config.js';
 import { sendGrafanaSilence, fetchGrafanaSilences, fetchGrafanaActiveAlerts } from './grafana.js';
 import { notifyWebhookProcessingError } from './webhook-error.js';
+import { DURATION_UNIT_TO_MS, getNumberEmojiDays, getReplyBody, isDeleteCommand, parseDurationInput } from './mute.js';
 
 const app = express();
 
@@ -38,139 +39,6 @@ app.use((req, _res, next) => {
 });
 
 const matrix = new MatrixServer(config.MATRIX_HOMESERVER_URL, config.MATRIX_ROOM_ID, config.MATRIX_ACCESS_TOKEN);
-
-const DURATION_UNIT_TO_MS = {
-    d: 24 * 60 * 60 * 1000,
-    h: 60 * 60 * 1000,
-    m: 60 * 1000
-};
-
-const formatDuration = (days = 0, hours = 0, minutes = 0) => {
-    const parts = [];
-
-    if (days > 0) {
-        parts.push(`${days} day${days === 1 ? '' : 's'}`);
-    }
-    if (hours > 0) {
-        parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
-    }
-    if (minutes > 0) {
-        parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
-    }
-
-    return parts.join(' ');
-};
-
-const parseDurationInput = (rawInput) => {
-    if (!rawInput || typeof rawInput !== 'string') {
-        return null;
-    }
-
-    const input = rawInput.trim().toLowerCase();
-    if (!input) {
-        return null;
-    }
-
-    // Colon format: D:H:M (left to right, missing tail segments allowed)
-    if (/^\d+(?::\d+){0,2}$/.test(input)) {
-        const parts = input.split(':').map(Number);
-        if (parts.some(Number.isNaN)) {
-            return null;
-        }
-
-        const [days = 0, hours = 0, minutes = 0] = parts;
-        const durationMs = (days * DURATION_UNIT_TO_MS.d) + (hours * DURATION_UNIT_TO_MS.h) + (minutes * DURATION_UNIT_TO_MS.m);
-        if (durationMs <= 0) {
-            return null;
-        }
-
-        return {
-            durationMs,
-            text: formatDuration(days, hours, minutes)
-        };
-    }
-
-    // Compact format: 2d1h10m
-    if (/^\d+d(?:\d+h)?(?:\d+m)?$|^\d+h(?:\d+m)?$|^\d+m$/.test(input)) {
-        const matches = [...input.matchAll(/(\d+)([dhm])/g)];
-        let days = 0;
-        let hours = 0;
-        let minutes = 0;
-        let lastRank = -1;
-        const rank = { d: 0, h: 1, m: 2 };
-
-        for (const [, amountRaw, unit] of matches) {
-            const amount = Number(amountRaw);
-            if (Number.isNaN(amount)) {
-                return null;
-            }
-
-            if (rank[unit] < lastRank) {
-                return null;
-            }
-
-            lastRank = rank[unit];
-
-            if (unit === 'd') days = amount;
-            if (unit === 'h') hours = amount;
-            if (unit === 'm') minutes = amount;
-        }
-
-        const durationMs = (days * DURATION_UNIT_TO_MS.d) + (hours * DURATION_UNIT_TO_MS.h) + (minutes * DURATION_UNIT_TO_MS.m);
-        if (durationMs <= 0) {
-            return null;
-        }
-
-        return {
-            durationMs,
-            text: formatDuration(days, hours, minutes)
-        };
-    }
-
-    // Word format: 2 hours 30 minutes, 1 day, 1 hour
-    if (/^(?:\d+\s*(?:days?|hours?|minutes?|mins?|d|h|m)\s*)+$/.test(input)) {
-        const matches = [...input.matchAll(/(\d+)\s*(days?|hours?|minutes?|mins?|d|h|m)/g)];
-        let days = 0;
-        let hours = 0;
-        let minutes = 0;
-        let lastRank = -1;
-        const rank = { d: 0, h: 1, m: 2 };
-
-        for (const [, amountRaw, rawUnit] of matches) {
-            const amount = Number(amountRaw);
-            if (Number.isNaN(amount)) {
-                return null;
-            }
-
-            let unit = rawUnit;
-            if (rawUnit.startsWith('day')) unit = 'd';
-            if (rawUnit.startsWith('hour')) unit = 'h';
-            if (rawUnit.startsWith('min')) unit = 'm';
-
-            if (rank[unit] < lastRank) {
-                return null;
-            }
-
-            lastRank = rank[unit];
-
-            if (unit === 'd') days = amount;
-            if (unit === 'h') hours = amount;
-            if (unit === 'm') minutes = amount;
-        }
-
-        const durationMs = (days * DURATION_UNIT_TO_MS.d) + (hours * DURATION_UNIT_TO_MS.h) + (minutes * DURATION_UNIT_TO_MS.m);
-        if (durationMs <= 0) {
-            return null;
-        }
-
-        return {
-            durationMs,
-            text: formatDuration(days, hours, minutes)
-        };
-    }
-
-    return null;
-};
 
 const buildAlertLabelsKey = (labels = {}) => {
     return Object.entries(labels)
@@ -363,12 +231,8 @@ matrix.on("reaction", async (reaction) => {
     }
 
     // Silence for N days based on number emoji
-    const numberEmojiMap = {
-        '1️⃣': 1, '2️⃣': 2, '3️⃣': 3, '4️⃣': 4, '5️⃣': 5, '6️⃣': 6, '7️⃣': 7
-    };
-
-    if (numberEmojiMap[key]) {
-        const days = numberEmojiMap[key];
+    const days = getNumberEmojiDays(key);
+    if (days) {
         console.log(`Received reaction for ${days} day(s) silence for event ${targetEventId}, alert ${alertId}`);
         await createGrafanaSilence(alertId, targetEventId, days * DURATION_UNIT_TO_MS.d, `${days} day${days === 1 ? '' : 's'}`);
     }
@@ -379,17 +243,29 @@ matrix.on("loop", () => {
 })
 
 matrix.on("userMessage", async (event) => {
-    const body = event.content?.body;
+    const body = getReplyBody(event.content);
     if (!body) {
         return;
     } 
 
-    const replyToEventId = event.content?.['m.relates_to']?.['m.in_reply_to']?.event_id;
-    if (replyToEventId && hasMessageMap(replyToEventId)) {
+    const relatesTo = event.content?.['m.relates_to'];
+    const replyToEventId = [
+        relatesTo?.['m.in_reply_to']?.event_id,
+        relatesTo?.rel_type === 'm.thread' ? relatesTo.event_id : null
+    ].find((eventId) => eventId && hasMessageMap(eventId));
+    if (replyToEventId) {
+        const alertId = getAlertIdFromEvent(replyToEventId);
+
+        if (isDeleteCommand(body)) {
+            console.log(`Received reply delete request for event ${replyToEventId}, alert ${alertId}`);
+            await deleteAndSilenceAlert(alertId, replyToEventId, 60);
+            await matrix.sendReaction(event.event_id, '☑️');
+            return;
+        }
+
         const parsedDuration = parseDurationInput(body);
 
         if (parsedDuration) {
-            const alertId = getAlertIdFromEvent(replyToEventId);
             console.log(`Received reply silence request for event ${replyToEventId}, alert ${alertId}: ${parsedDuration.text}`);
             await createGrafanaSilence(alertId, replyToEventId, parsedDuration.durationMs, parsedDuration.text);
             await matrix.sendReaction(event.event_id, '☑️');

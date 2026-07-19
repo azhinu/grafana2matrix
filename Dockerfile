@@ -7,7 +7,8 @@ COPY package*.json ./
 # Install production dependencies
 RUN npm ci --omit=dev
 
-COPY . .
+COPY src ./src
+COPY test ./test
 
 # Expose the port the app runs on
 EXPOSE 3000

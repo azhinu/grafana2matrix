@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MatrixServer } from '../src/matrix.js';
+import { isReplyMessage, MatrixServer } from '../src/matrix.js';
 
 const formatMessageBody = (message) => {
     const formatter = Object.create(MatrixServer.prototype);
@@ -52,4 +52,10 @@ test('safeEmitAsync waits listeners and continues after handler failure', async 
     }
 
     assert.deepEqual(calls, ['first', 'second']);
+});
+
+test('isReplyMessage recognises regular replies and thread replies', () => {
+    assert.equal(isReplyMessage({ content: { body: 'Plain message' } }), false);
+    assert.equal(isReplyMessage({ content: { 'm.relates_to': { 'm.in_reply_to': { event_id: '$alert' } } } }), true);
+    assert.equal(isReplyMessage({ content: { 'm.relates_to': { rel_type: 'm.thread', event_id: '$alert' } } }), true);
 });

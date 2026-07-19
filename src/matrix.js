@@ -61,6 +61,11 @@ const formatHtmlMessage = (messageContent) => {
     return formattedBody;
 };
 
+const isReplyMessage = (event) => {
+    const relatesTo = event.content?.['m.relates_to'];
+    return Boolean(relatesTo?.['m.in_reply_to']?.event_id || relatesTo?.rel_type === 'm.thread');
+};
+
 class MatrixServer extends EventEmitter{
 
     constructor(homeserver, roomID, token) {
@@ -162,7 +167,9 @@ class MatrixServer extends EventEmitter{
                             continue;
                         }
 
-                        if (event.sender !== this.userId) {
+                        // A user may operate the bot from the same Matrix account as its access token.
+                        // Ignore the bot's own notifications, but allow its replies to reach command handling.
+                        if (event.sender !== this.userId || isReplyMessage(event)) {
                             await this.safeEmitAsync('userMessage', event);
                         }
                      }
@@ -358,4 +365,4 @@ class MatrixServer extends EventEmitter{
     }
 }
 
-export { MatrixServer };
+export { isReplyMessage, MatrixServer };
