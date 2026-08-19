@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "DB_FILE=/private/tmp/grafana2matrix-test.db node --test",
+    "test": "DB_FILE=/tmp/grafana2matrix-test.db node --test",
     "lint": "biome lint"
   },
   "keywords": [],
