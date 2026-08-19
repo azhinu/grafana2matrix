@@ -9,7 +9,6 @@ const createMatrixMessage = (a) => {
 
     const alertName = a.labels?.alertname || 'Unknown Alert';
     const host = getAlertValue(a, "host") ?? getAlertValue(a, "instance") ?? "Unknown Host";
-    const severity = getAlertValue(a, "severity", "UNKNOWN").toUpperCase();
 
     const additionalLabels = getAdditionalLabels(a);
     const summary = getAlertValue(a, "summary");
@@ -21,10 +20,10 @@ const createMatrixMessage = (a) => {
     
     const isFiring = a.status === 'firing';
     let color; 
-    let resolved = "";
+    let severity = getAlertValue(a, "severity", "UNKNOWN").toUpperCase();
     if (!isFiring) {
         color = '#007a00';
-        resolved = "RESOLVED ";
+        severity = "RESOLVED";
     }
     else if (isInfo(severity)) {
         color = '#3daeef';
@@ -35,7 +34,7 @@ const createMatrixMessage = (a) => {
         color = '#d20000';
     }
 
-    let matrixMessage = `<font color="${color}">**${resolved}${severity}: ${alertName}**</font>\n`;
+    let matrixMessage = `<font color="${color}">**${severity}: ${alertName}**</font>\n`;
     matrixMessage += `**HOST: ${host}**\n`;
 
     for (const [label, value] of Object.entries(additionalLabels)) {
