@@ -3,3 +3,4 @@ node_modules/
 mention_config.json
 compose.yml
 config
+mcp_docker.log

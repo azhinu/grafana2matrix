@@ -23,6 +23,25 @@ test('parseDurationInput accepts a reply duration after fallback removal', () =>
     });
 });
 
+test('parseDurationInput accepts weeks and uppercase months', () => {
+    assert.deepEqual(parseDurationInput('2W'), {
+        durationMs: 2 * 7 * 24 * 60 * 60 * 1000,
+        text: '2 weeks'
+    });
+    assert.deepEqual(parseDurationInput('2w'), {
+        durationMs: 2 * 7 * 24 * 60 * 60 * 1000,
+        text: '2 weeks'
+    });
+    assert.deepEqual(parseDurationInput('1M'), {
+        durationMs: 30 * 24 * 60 * 60 * 1000,
+        text: '1 month'
+    });
+    assert.deepEqual(parseDurationInput('2m'), {
+        durationMs: 2 * 60 * 1000,
+        text: '2 minutes'
+    });
+});
+
 test('isDeleteCommand only accepts explicit delete aliases', () => {
     assert.equal(isDeleteCommand('del'), true);
     assert.equal(isDeleteCommand(' DELETE '), true);

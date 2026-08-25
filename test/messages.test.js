@@ -35,7 +35,7 @@ test('createMatrixMessage marks resolved alerts', () => {
         annotations: {},
     });
 
-    assert.match(message, /RESOLVED WARN: CpuHigh/);
+    assert.match(message, /RESOLVED: CpuHigh/);
     assert.match(message, /\*\*HOST: api-01\*\*/);
 });
 
